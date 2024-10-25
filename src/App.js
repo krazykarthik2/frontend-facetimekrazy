@@ -2,7 +2,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import io from "socket.io-client";
 
-const socket = io.connect("http://localhost:5000", { transports: ["websocket"] }); // Update with backend server URL if necessary
+const socket = io.connect(process.env.REACT_APP_BACKEND_URL, { transports: ["websocket"] }); // Update with backend server URL if necessary
 
 const App = () => {
   const localVideoRef = useRef(null);
