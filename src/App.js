@@ -2,7 +2,9 @@
 import React, { useEffect, useRef, useState } from "react";
 import io from "socket.io-client";
 
-const socket = io.connect(process.env.REACT_APP_BACKEND_URL, { transports: ["websocket"] }); // Update with backend server URL if necessary
+const socket = io.connect(process.env.REACT_APP_BACKEND_URL, {
+  transports: ["websocket"],
+}); // Update with backend server URL if necessary
 
 const App = () => {
   const localVideoRef = useRef(null);
@@ -23,18 +25,25 @@ const App = () => {
             audio: true,
           });
           localVideoRef.current.srcObject = localStream;
-
           // Join room
+          console.log("joining room...")
           socket.emit("join-call", roomId);
-          setUpSocketEvents(localStream);
+          setUpSocketEvents(localStream);//return cleanup
         } else alert("getUserMedia() not supported in your browser.");
       } else alert("mediaDevices not supported in your browser.");
     };
-    init();
+     init();//return cleanup
   }, []);
 
   const setUpSocketEvents = (localStream) => {
+    console.log("setting up events...")
+    socket.on("user-left", (userId) => {
+      console.log("user-left", userId);
+      peerConnection.close();
+      alert("user-left");
+    })
     socket.on("user-joined", async (userId) => {
+      console.log("user-joined", userId);
       const pc = new RTCPeerConnection(config);
       localStream
         .getTracks()
@@ -53,26 +62,48 @@ const App = () => {
     });
 
     socket.on("signal", async (data) => {
-      const pc = peerConnection || new RTCPeerConnection(config);
-      setPeerConnection(pc);
-      pc.ontrack = (event) => {
-        remoteVideoRef.current.srcObject = event.streams[0];
-      };
-      pc.onicecandidate = (event) => {
-        if (event.candidate)
-          socket.emit("signal", { to: data.from, signal: event.candidate });
-      };
-      if (data.signal.type === "offer") {
-        await pc.setRemoteDescription(new RTCSessionDescription(data.signal));
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        socket.emit("signal", { to: data.from, signal: answer });
-      } else if (data.signal.type === "answer") {
-        await pc.setRemoteDescription(new RTCSessionDescription(data.signal));
-      } else if (data.signal.candidate) {
-        await pc.addIceCandidate(new RTCIceCandidate(data.signal));
+      try {
+        console.log("signal", data);
+        const pc = peerConnection || new RTCPeerConnection(config);
+        setPeerConnection(pc);
+        pc.ontrack = (event) => {
+          remoteVideoRef.current.srcObject = event.streams[0];
+        };
+        pc.onicecandidate = (event) => {
+          if (event.candidate)
+            socket.emit("signal", { to: data.from, signal: event.candidate });
+        };
+        if (data.signal.type === "offer") {
+          // Only set remote description if state allows
+          if (peerConnection.signalingState === "stable") {
+            await peerConnection.setRemoteDescription(
+              new RTCSessionDescription(data.signal)
+            );
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+            socket.emit("signal", { to: data.from, signal: answer });
+          }
+        } else if (data.signal.type === "answer") {
+          // Ensure we're in the correct state to set the answer
+          if (peerConnection.signalingState === "have-local-offer") {
+            await peerConnection.setRemoteDescription(
+              new RTCSessionDescription(data.signal)
+            );
+          }
+        } else if (data.signal.candidate) {
+          // Add ICE candidate only if remote description is set
+          if (peerConnection.remoteDescription) {
+            await peerConnection.addIceCandidate(
+              new RTCIceCandidate(data.signal)
+            );
+          }
+        }
+      } catch (error) {
+        console.error("Error during signaling process:", error);
       }
     });
+    
+  
   };
 
   return (
